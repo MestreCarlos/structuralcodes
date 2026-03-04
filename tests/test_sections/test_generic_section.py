@@ -1658,3 +1658,194 @@ def test_issue_cracked_properties():
     assert cracked_properties_before.isclose(
         cracked_properties_after, rtol=1e-3, atol=1e-6
     )
+
+
+def test_mn_full_domain():
+    """Test calculating the full MN interaction domain."""
+    # Set parameters
+    width = 250
+    height = 500
+    diameter_reinf = 25
+    cover = 50
+
+    fck = 45
+    fyk = 500
+    Es = 200e3
+    epsuk = 6e-2
+
+    # Create materials
+    concrete = ConcreteEC2_2004(fck=fck)
+    reinforcement = ReinforcementEC2_2004(fyk=fyk, Es=Es, ftk=fyk, epsuk=epsuk)
+
+    # Create geometry
+    z_reinforcement = height / 2 - cover - diameter_reinf / 2
+    y_reinforcement = width / 2 - cover - diameter_reinf / 2
+    geometry = RectangularGeometry(
+        width=width, height=height, material=concrete
+    )
+
+    for z in (-z_reinforcement, z_reinforcement):
+        geometry = add_reinforcement_line(
+            geometry,
+            (z, -y_reinforcement),
+            (z, y_reinforcement),
+            diameter_reinf,
+            reinforcement,
+            n=2,
+        )
+
+    # Create section
+    section = GenericSection(geometry, integrator='fiber')
+
+    # Calculate interaction domain for theta = 0
+    interaction_domain_0 = (
+        section.section_calculator.calculate_nm_interaction_domain(theta=0)
+    )
+
+    # Calculate interaction domain for theta = pi
+    interaction_domain_180 = (
+        section.section_calculator.calculate_nm_interaction_domain(theta=np.pi)
+    )
+
+    # Calculate the full interaction domain
+    interaction_domain_full = (
+        section.section_calculator.calculate_nm_interaction_domain(
+            complete_domain=True
+        )
+    )
+
+    # Combine theta = 0 and theta = 180 to obtain the full domain
+    interaction_domain_full_combined_n = [
+        *interaction_domain_0.n,
+        *interaction_domain_180.n[-2:0:-1],
+    ]
+    interaction_domain_full_combined_my = [
+        *interaction_domain_0.m_y,
+        *interaction_domain_180.m_y[-2:0:-1],
+    ]
+
+    assert (
+        len(interaction_domain_full.n)
+        == len(interaction_domain_0.n) + len(interaction_domain_180.n) - 2
+    )
+    assert np.allclose(
+        interaction_domain_full.n, interaction_domain_full_combined_n
+    )
+    assert np.allclose(
+        interaction_domain_full.m_y, interaction_domain_full_combined_my
+    )
+
+
+@pytest.mark.parametrize('integrator', ['fiber', 'marin'])
+def test_issue_gross_props_after_calculation(integrator):
+    """Test for issue #303.
+    Bug in section.gross_properties in relation to calculate_moment_curvature.
+
+    This test shows that when computing the gross properties before
+    another calculation it works, but after it does not work anymore.
+
+    Fixed with PR #315.
+    """
+    # ===========================================================
+    # Test 1: Rectangular section
+    # ===========================================================
+
+    # Create materials
+    concrete = ConcreteMC2010(fck=40)
+    reinforcement = ReinforcementMC2010(
+        fyk=500, Es=200000, ftk=500, epsuk=0.075
+    )
+
+    # Create geometry
+    width = 300
+    height = 500
+    cover = 50
+
+    geo = RectangularGeometry(width=width, height=height, material=concrete)
+    geo = add_reinforcement_line(
+        geo=geo,
+        coords_i=(-width / 2 + cover, -height / 2 + cover),
+        coords_j=(width / 2 - cover, -height / 2 + cover),
+        diameter=16,
+        material=reinforcement,
+        n=4,
+    )
+
+    section = GenericSection(geometry=geo, integrator=integrator)
+    gp_before = section.gross_properties
+
+    res = section.section_calculator.calculate_bending_strength()
+    m_1 = -res.m_y
+
+    # This should be the cached one, so the same as before
+    gp_after = section.gross_properties
+    assert gp_before.isclose(gp_after, rtol=1e-3, atol=1e-6)
+
+    # Now create a new section but compute first the strength
+    section = GenericSection(geometry=geo, integrator=integrator)
+    res = section.section_calculator.calculate_bending_strength()
+    m_2 = -res.m_y
+
+    gp_after = section.gross_properties
+
+    # gp after and before should be the same
+    assert gp_before.isclose(gp_after, rtol=1e-3, atol=1e-6)
+
+    # m_1 and m_2 should be the same
+    assert math.isclose(m_1, m_2, rel_tol=1e-3)
+
+    # ===========================================================
+    # Test 2: Different section (from issue #303)
+    # ===========================================================
+    b = 300  # mm
+    b0 = 200
+    d = 200
+    d1 = 200
+    cover = 50
+
+    polygon = Polygon(
+        [
+            (-b / 2, d / 2),
+            (-b / 2, -d / 2),
+            (-b0 / 2, -d / 2),
+            (-b0 / 2, -d / 2 - d1),
+            (b0 / 2, -d / 2 - d1),
+            (b0 / 2, -d / 2),
+            (b / 2, -d / 2),
+            (b / 2, d / 2),
+        ]
+    )
+
+    geometry = SurfaceGeometry(poly=polygon, material=concrete)
+
+    geometry = add_reinforcement_line(
+        geometry,
+        (-b0 / 2 + cover, -d / 2 - d1 + cover),
+        (b0 / 2 - cover, -d / 2 - d1 + cover),
+        20,
+        reinforcement,
+        3,
+    )
+
+    section = GenericSection(geometry=geometry, integrator=integrator)
+    gp_before = section.gross_properties
+
+    res = section.section_calculator.calculate_moment_curvature()
+    m_max1 = np.max(np.abs(res.m_y))
+
+    # This should be the cached one, so the same as before
+    gp_after = section.gross_properties
+    assert gp_before.isclose(gp_after, rtol=1e-3, atol=1e-6)
+
+    # Now create a new section but compute first the strength
+    section = GenericSection(geometry=geometry, integrator=integrator)
+    res = section.section_calculator.calculate_moment_curvature()
+    m_max2 = np.max(np.abs(res.m_y))
+
+    gp_after = section.gross_properties
+
+    # gp after and before should be the same
+    assert gp_before.isclose(gp_after, rtol=1e-3, atol=1e-6)
+
+    # m_max1 and m_max2 should be the same
+    assert math.isclose(m_max1, m_max2, rel_tol=1e-3)
