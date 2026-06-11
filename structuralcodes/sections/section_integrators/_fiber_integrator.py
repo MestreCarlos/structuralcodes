@@ -18,6 +18,50 @@ from ._section_integrator import SectionIntegrator
 class FiberIntegrator(SectionIntegrator):
     """Section integrator based on the Marin algorithm."""
 
+    def __init__(
+        self,
+        reference_planes: t.Optional[t.Dict] = None,
+    ) -> None:
+        """Initialize the FiberIntegrator.
+
+        Arguments:
+            reference_planes (Optional(Dict)): An optional mapping from a
+                geometry (SurfaceGeometry or PointGeometry instance) to its
+                stress-free reference strain plane ``(eps_a, chi_y, chi_z)``.
+                Used by staged (evolutive) analyses: the strain driving the
+                constitutive law of each fiber becomes
+                ``eps_drive = eps_current - eps_reference``. When a geometry is
+                not present in the mapping (or the mapping is empty) its
+                reference plane is null, recovering the standard behaviour.
+        """
+        self.reference_planes = reference_planes or {}
+
+    @staticmethod
+    def _reference_strain(
+        reference_plane: t.Optional[t.Sequence[float]],
+        y: np.ndarray,
+        z: np.ndarray,
+    ) -> np.ndarray:
+        """Evaluate a reference strain plane on a set of fiber coordinates.
+
+        The convention matches the one used to compute fiber strains, i.e.
+        ``eps = eps_a + chi_y * z - chi_z * y`` where ``y`` is the section Y
+        coordinate (shapely x) and ``z`` the section Z coordinate (shapely y).
+
+        Arguments:
+            reference_plane (Optional(Sequence(float))): The reference plane
+                ``(eps_a, chi_y, chi_z)`` or None (null plane).
+            y (np.ndarray): The section Y coordinates of the fibers.
+            z (np.ndarray): The section Z coordinates of the fibers.
+
+        Returns:
+            np.ndarray: The reference strain at each fiber (zeros if no plane).
+        """
+        if reference_plane is None:
+            return np.zeros_like(y, dtype=float)
+        eps_a, chi_y, chi_z = reference_plane
+        return eps_a - chi_z * y + chi_y * z
+
     def prepare_triangulation(self, geo: SurfaceGeometry) -> t.Dict:
         """Prepare data for triangulating it with triangle.
 
@@ -63,7 +107,11 @@ class FiberIntegrator(SectionIntegrator):
 
     def triangulate(
         self, geo: CompoundGeometry, mesh_size: float
-    ) -> t.List[t.Tuple[np.ndarray, np.ndarray, np.ndarray, ConstitutiveLaw]]:
+    ) -> t.List[
+        t.Tuple[
+            np.ndarray, np.ndarray, np.ndarray, ConstitutiveLaw, np.ndarray
+        ]
+    ]:
         """Triangulate the geometry discretizing it into fibers.
 
         Arguments:
@@ -89,6 +137,8 @@ class FiberIntegrator(SectionIntegrator):
             # triangulate the geometry getting back the mesh
             mesh = triangle.triangulate(tri, f'pq{30:.1f}Aa{max_area}o1')
             constitutive_law = g.material.constitutive_law
+            # Optional stress-free reference strain plane for this geometry
+            reference_plane = self.reference_planes.get(g)
             # Get x and y coordinates (centroid) and area for each fiber
             x = []
             y = []
@@ -126,9 +176,13 @@ class FiberIntegrator(SectionIntegrator):
                 area.append(a)
                 # pointer to the material
 
+            # precompute the reference strain at each fiber (zeros if none)
+            x_arr = np.array(x)
+            y_arr = np.array(y)
+            eps_ref = self._reference_strain(reference_plane, x_arr, y_arr)
             # return back the triangulation data
             triangulated_data.append(
-                (np.array(x), np.array(y), np.array(area), constitutive_law)
+                (x_arr, y_arr, np.array(area), constitutive_law, eps_ref)
             )
         # For the reinforcement
         # Tentative proposal for managing reinforcement (PointGeometry)
@@ -140,11 +194,20 @@ class FiberIntegrator(SectionIntegrator):
             y = y[0]
             area = pg.area
             constitutive_law = pg.material.constitutive_law
+            # Reference strain of this point (scalar, zero if no plane)
+            eps_ref = float(
+                self._reference_strain(
+                    self.reference_planes.get(pg),
+                    np.array(x),
+                    np.array(y),
+                )
+            )
             if reinf_data.get(constitutive_law) is None:
                 reinf_data[constitutive_law] = [
                     np.array(x),
                     np.array(y),
                     np.array(area),
+                    np.array(eps_ref),
                 ]
             else:
                 reinf_data[constitutive_law][0] = np.hstack(
@@ -156,9 +219,12 @@ class FiberIntegrator(SectionIntegrator):
                 reinf_data[constitutive_law][2] = np.hstack(
                     (reinf_data[constitutive_law][2], area)
                 )
+                reinf_data[constitutive_law][3] = np.hstack(
+                    (reinf_data[constitutive_law][3], eps_ref)
+                )
         for constitutive_law, value in reinf_data.items():
             triangulated_data.append(
-                (value[0], value[1], value[2], constitutive_law)
+                (value[0], value[1], value[2], constitutive_law, value[3])
             )
 
         return triangulated_data
@@ -222,6 +288,10 @@ class FiberIntegrator(SectionIntegrator):
         for tr in integration_data:
             # All have the same material
             strains = strain[0] - strain[2] * tr[0] + strain[1] * tr[1]
+            # Subtract the stress-free reference strain plane (staged
+            # analysis). Backwards compatible with 4-tuples (no reference).
+            if len(tr) > 4:
+                strains = strains - tr[4]
             # compute stresses in all materials
             if integrate == 'stress':
                 integrand = tr[3].get_stress(strains)

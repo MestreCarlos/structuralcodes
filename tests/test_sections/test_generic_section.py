@@ -9,6 +9,7 @@ from shapely import Polygon
 from structuralcodes.codes.ec2_2004 import reinforcement_duct_props
 from structuralcodes.geometry import (
     CircularGeometry,
+    LineGeometry,
     RectangularGeometry,
     SurfaceGeometry,
     add_reinforcement,
@@ -197,6 +198,35 @@ def test_rectangular_section_tangent_stiffness(b, h, E, integrator):
         atol=stiffness.max() * 1e-6,
         rtol=1e-2,
     )
+
+
+@pytest.mark.parametrize('integrator', ['fiber', 'marin'])
+def test_line_geometry_tangent_stiffness(integrator):
+    """LineGeometry should reproduce the analytical elastic stiffness."""
+    E = 210000
+    mat = ElasticMaterial(E=E, density=7850)
+    p0 = (-300.0, 40.0)
+    p1 = (300.0, 40.0)
+    t = 12.0
+
+    line_geo = LineGeometry((p0, p1), t, mat)
+    sec_line = GenericSection(line_geo, integrator=integrator, mesh_size=0.01)
+    k_line = sec_line.section_calculator.integrate_strain_profile(
+        [0, 0, 0], 'modulus'
+    )
+
+    L = 600.0
+    A = L * t
+    zc = 40.0
+    iyy_cent = L * t**3 / 12.0
+    izz_cent = t * L**3 / 12.0
+    iyy = iyy_cent + A * zc**2
+    izz = izz_cent
+
+    assert math.isclose(k_line[0, 0], E * A, rel_tol=1e-6)
+    assert math.isclose(k_line[0, 1], E * A * zc, rel_tol=1e-6)
+    assert math.isclose(k_line[1, 1], E * iyy, rel_tol=5e-3)
+    assert math.isclose(k_line[2, 2], E * izz, rel_tol=5e-3)
 
 
 # Test rectangular RC section tangent stiffness initial

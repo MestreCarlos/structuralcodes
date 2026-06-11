@@ -546,7 +546,7 @@ def rho_p_eff(As: float, xi1: float, Ap: float, Ac_eff: float) -> float:
         xi1 (float): The adjusted ratio of bond according to expression (7.5).
         Ap (float): The area in mm2 of post-tensioned tendons in ac_eff.
         Ac_eff (float): Effective area of concrete in tension surrounding the
-            reinforcement or prestressing tendons of depth hc_eff.
+            reinforcement or prestressing tendons of depth hc_eff in mm2.
 
     Returns:
         float: With the retio between areas.

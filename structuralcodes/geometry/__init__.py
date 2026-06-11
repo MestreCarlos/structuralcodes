@@ -9,6 +9,7 @@ from ._geometry import (
     SurfaceGeometry,
     create_line_point_angle,
 )
+from ._linegeometry import LineGeometry
 from ._rectangular import RectangularGeometry
 from ._reinforcement import (
     add_reinforcement,
@@ -18,6 +19,7 @@ from ._reinforcement import (
 
 __all__ = [
     'Geometry',
+    'LineGeometry',
     'PointGeometry',
     'SurfaceGeometry',
     'CompoundGeometry',

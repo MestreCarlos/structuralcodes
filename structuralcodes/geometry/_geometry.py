@@ -582,6 +582,8 @@ class SurfaceGeometry(Geometry):
             poly=affinity.translate(self.polygon, dx, dy),
             material=self.material,
             concrete=self.concrete,
+            name=self.name,
+            group_label=self.group_label,
         )
 
     def rotate(
@@ -609,6 +611,8 @@ class SurfaceGeometry(Geometry):
             ),
             material=self.material,
             concrete=self.concrete,
+            name=self.name,
+            group_label=self.group_label,
         )
 
     def mirror(self, axis: LineString) -> SurfaceGeometry:
@@ -631,6 +635,8 @@ class SurfaceGeometry(Geometry):
             poly=affinity.affine_transform(self.polygon, params),
             material=self.material,
             concrete=self.concrete,
+            name=self.name,
+            group_label=self.group_label,
         )
 
     @staticmethod
@@ -668,7 +674,13 @@ class SurfaceGeometry(Geometry):
             # elastic modulus
             new_material = ElasticMaterial.from_material(geo.material)
 
-        return SurfaceGeometry(poly=geo.polygon, material=new_material)
+        return SurfaceGeometry(
+            poly=geo.polygon,
+            material=new_material,
+            concrete=geo.concrete,
+            name=geo.name,
+            group_label=geo.group_label,
+        )
 
     # here we can also add static methods like:
     # from_points
@@ -926,7 +938,7 @@ class CompoundGeometry(Geometry):
         processed_geoms = []
         for g in geo.geometries:
             processed_geoms.append(
-                SurfaceGeometry.from_geometry(geo=g, new_material=new_material)
+                type(g).from_geometry(geo=g, new_material=new_material)
             )
         for pg in geo.point_geometries:
             processed_geoms.append(

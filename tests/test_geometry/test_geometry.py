@@ -11,6 +11,7 @@ from shapely.testing import assert_geometries_equal
 from structuralcodes.geometry import (
     CompoundGeometry,
     Geometry,
+    LineGeometry,
     PointGeometry,
     RectangularGeometry,
     SurfaceGeometry,
@@ -254,6 +255,43 @@ def test_surface_geometry():  # noqa: PLR0915
         ' L 100.0,-200.0 L 100.0,200.0 L -100.0,200.0 L -100.0,-200.0 z" />'
         '</g></svg>'
     )
+
+
+def test_line_geometry():
+    """Test creating and transforming a LineGeometry object."""
+    steel = ElasticMaterial(E=210000, density=7850)
+    line = LineGeometry(((-100, 0), (100, 0)), 10, steel)
+
+    assert math.isclose(line.length, 200.0)
+    assert math.isclose(line.thickness, 10.0)
+    assert math.isclose(line.area, 2000.0)
+    assert math.isclose(line.centroid[0], 0.0)
+    assert math.isclose(line.centroid[1], 0.0)
+
+    line_t = line.translate(10, 20)
+    assert math.isclose(line_t.centroid[0], 10.0)
+    assert math.isclose(line_t.centroid[1], 20.0)
+
+    line_r = line.rotate(np.pi / 2)
+    assert math.isclose(line_r.length, line.length)
+    assert math.isclose(line_r.area, line.area)
+
+    axis = LineString([(0, -1), (0, 1)])
+    line_m = line.mirror(axis)
+    assert math.isclose(line_m.length, line.length)
+    assert math.isclose(line_m.area, line.area)
+
+    with pytest.raises(ValueError) as excinfo:
+        LineGeometry(((-100, 0), (100, 0)), 0, steel)
+    assert str(excinfo.value) == 'thickness should be larger than 0'
+
+    with pytest.raises(ValueError) as excinfo:
+        LineGeometry(((-100, 0), (100, 0), (120, 0)), 10, steel)
+    assert str(excinfo.value) == 'line should be provided as shape (2, 2)'
+
+    with pytest.raises(ValueError) as excinfo:
+        LineGeometry(((0, 0), (0, 0)), 10, steel)
+    assert str(excinfo.value) == 'line length should be larger than 0'
 
 
 def test_compound_geometry():
@@ -700,6 +738,47 @@ def test_surface_geometry_name_group_label():
     # Assert
     assert geometry.name == name
     assert geometry.group_label == group_label
+
+
+def test_surface_geometry_labels_survive_transforms():
+    """Name and group_label must survive translate/rotate/from_geometry."""
+    concrete = ElasticMaterial(E=30_000, density=2400)
+    geometry = SurfaceGeometry(
+        poly=Polygon(((0, 0), (100, 0), (100, 200), (0, 200))),
+        material=concrete,
+        name='slab',
+        group_label='deck',
+    )
+
+    translated = geometry.translate(10, 20)
+    assert translated.name == 'slab'
+    assert translated.group_label == 'deck'
+
+    rotated = geometry.rotate(0.5)
+    assert rotated.name == 'slab'
+    assert rotated.group_label == 'deck'
+
+    from_geom = SurfaceGeometry.from_geometry(geometry)
+    assert from_geom.name == 'slab'
+    assert from_geom.group_label == 'deck'
+
+
+def test_compound_geometry_labels_survive_translate():
+    """Labels of parts survive a CompoundGeometry translate."""
+    concrete = ElasticMaterial(E=30_000, density=2400)
+    steel = ElasticMaterial(E=200_000, density=7850)
+    surface = SurfaceGeometry(
+        poly=Polygon(((0, 0), (100, 0), (100, 200), (0, 200))),
+        material=concrete,
+        group_label='deck',
+    )
+    point = PointGeometry(np.array([50, 100]), 12, steel, group_label='rebar')
+    compound = CompoundGeometry([surface, point])
+
+    moved = compound.translate(5, 5)
+
+    assert moved.geometries[0].group_label == 'deck'
+    assert moved.point_geometries[0].group_label == 'rebar'
 
 
 def test_mirror_geometry():

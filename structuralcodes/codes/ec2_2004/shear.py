@@ -200,7 +200,7 @@ def VRdc(
             Default value is 0.18 / gamma_c.
 
     Returns:
-        float: The concrete shear resistance in MPa.
+        float: The concrete shear resistance in N.
     """
     CRdc = CRdc or 0.18 / gamma_c
     return max(
@@ -513,7 +513,7 @@ def Asw_max(
     """Calculate the maximum cross-sectional area of the shear reinforcement,
     based on the assumption 1/tan(theta) == 1.
 
-    EN 1992-1-1 (2005). Eq. (6.13)
+    EN 1992-1-1 (2005). Eq. (6.15)
 
     Args:
         fcd (float): The design strength of the concrete in MPa.
@@ -547,5 +547,54 @@ def Asw_max(
         * fcd
         * bw
         * s
+        / (fywd * math.sin(alpha))
+    )
+
+
+# Equation (6.12 & 6.15)
+# For alpha == 90 degrees, Equation (6.15) reduces to Equation (6.12).
+def Asw_s_max(
+    fcd: float,
+    fck: float,
+    bw: float,
+    fywd: float,
+    NEd: float,
+    Ac: float,
+    alpha: float = 90.0,
+) -> float:
+    """Calculate the maximum cross-sectional area of the shear reinforcement per unit length,
+    based on the assumption 1/tan(theta) == 1.
+
+    EN 1992-1-1 (2005). Eq. (6.15)
+
+    Args:
+        fcd (float): The design strength of the concrete in MPa.
+        fck (float): The characteristic compressive strength in MPa.
+        bw (float): The smallest width of the cross-section in tension in mm.
+        fywd (float): The design strength of the shear reinforcement steel in
+            MPa.
+        NEd (float): The normal force in the cross-section due to loading or
+            prestress (NEd > 0 for compression) in N.
+        Ac (float): The cross-sectional area of the concrete in mm2.
+
+    Keyword Args:
+        alpha (float): The angle of the shear reinforcement with respect to the
+            neutral axis in degrees. Default value = 90 degrees.
+
+    Returns:
+        float: The maximum allowable cross-sectional area of the shear per unit length
+        reinforcement in mm2/mm.
+
+    Raises:
+        ValueError: When sigma_cp > fcd.
+    """
+    alpha = math.radians(alpha)
+    return (
+        1.0
+        / 2.0
+        * alpha_cw(NEd, Ac, fcd)
+        * v(fck)
+        * fcd
+        * bw
         / (fywd * math.sin(alpha))
     )
