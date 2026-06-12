@@ -1436,6 +1436,7 @@ class GenericSectionCalculator(SectionCalculator):
         initial: bool = False,
         max_iter: int = 10,
         tol: float = 1e-6,
+        strain0: t.Optional[t.Sequence[float]] = None,
     ) -> t.List[float]:
         """Get the strain plane for a given axial force and biaxial bending.
 
@@ -1449,6 +1450,9 @@ class GenericSectionCalculator(SectionCalculator):
                 process (default = 10).
             tol (float): the tolerance for convergence test in terms of strain
                 increment.
+            strain0 (Optional(Sequence(float))): Optional starting strain plane
+                ``(eps_a, chi_y, chi_z)`` for the Newton iteration. Useful for
+                staged analyses where the solution lies near the previous phase.
 
         Returns:
             List(float): 3 floats: Axial strain at (0,0), and curvatures of the
@@ -1460,11 +1464,14 @@ class GenericSectionCalculator(SectionCalculator):
         # Collect loads in a numpy array
         loads = np.array([n, my, mz])
 
+        strain = np.zeros(3) if strain0 is None else np.array(strain0, dtype=float)
+        use_line_search = bool(getattr(self.integrator, 'reference_planes', None))
+
         # Compute initial tangent stiffness matrix
         stiffness_tangent, integration_data = (
             self.integrator.integrate_strain_response_on_geometry(
                 geom,
-                [0, 0, 0],
+                strain.tolist(),
                 integrate='modulus',
                 integration_data=self.integration_data,
             )
@@ -1475,7 +1482,6 @@ class GenericSectionCalculator(SectionCalculator):
 
         # Calculate strain plane with Newton Rhapson Iterative method
         num_iter = 0
-        strain = np.zeros(3)
 
         # Factorize once the stiffness matrix if using initial
         if initial:
@@ -1510,13 +1516,32 @@ class GenericSectionCalculator(SectionCalculator):
                 # Solve using the current tangent stiffness
                 delta_strain = np.linalg.solve(stiffness_tangent, residual)
 
-            # Update the strain
-            strain += delta_strain
+            # Update the strain (line search when reference planes make the
+            # tangent poorly conditioned for a full Newton step).
+            strain_old = strain.copy()
+            if use_line_search:
+                residual_norm = float(np.linalg.norm(residual))
+                alpha = 1.0
+                strain_candidate = strain + delta_strain
+                candidate_residual = loads - np.array(
+                    self.integrate_strain_profile(strain=strain_candidate.tolist())
+                )
+                candidate_residual_norm = float(np.linalg.norm(candidate_residual))
+                while candidate_residual_norm >= residual_norm and alpha > 0.0625:
+                    alpha *= 0.5
+                    strain_candidate = strain + alpha * delta_strain
+                    candidate_residual = loads - np.array(
+                        self.integrate_strain_profile(strain=strain_candidate.tolist())
+                    )
+                    candidate_residual_norm = float(np.linalg.norm(candidate_residual))
+                strain = strain_candidate
+            else:
+                strain += delta_strain
 
             num_iter += 1
 
             # Check for convergence:
-            if np.linalg.norm(delta_strain) < tol:
+            if np.linalg.norm(strain - strain_old) < tol:
                 break
 
         if num_iter >= max_iter:
