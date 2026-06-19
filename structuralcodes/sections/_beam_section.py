@@ -1778,6 +1778,7 @@ class BeamSectionCalculator(SectionCalculator):
         initial: bool = False,
         max_iter: int = 10,
         tol: float = 1e-6,
+        initial_strain: t.Optional[ArrayLike] = None,
     ) -> s_res.StrainProfileResult:
         """Get the strain plane for a given axial force and biaxial bending.
 
@@ -1791,6 +1792,10 @@ class BeamSectionCalculator(SectionCalculator):
                 process (default = 10).
             tol (float): the tolerance for convergence test in terms of strain
                 increment.
+            initial_strain (Optional(ArrayLike)): Optional starting strain plane
+                ``(eps_a, chi_y, chi_z)`` for the Newton iteration. Useful when
+                reference strain planes are set on the integrator (staged
+                analysis), where a zero start can diverge.
 
         Returns:
             StrainProfileResult: A custom object of class StrainProfileResult
@@ -1820,7 +1825,10 @@ class BeamSectionCalculator(SectionCalculator):
         # Calculate strain plane with Newton Rhapson Iterative method
         num_iter = 0
         converged = False
-        strain = np.zeros(3, dtype=float)
+        if initial_strain is None:
+            strain = np.zeros(3, dtype=float)
+        else:
+            strain = np.array(initial_strain, dtype=float).reshape(3)
 
         # Calculate the initial response and residuals. Note that the initial
         # residual might be different from the applied loads if any initial

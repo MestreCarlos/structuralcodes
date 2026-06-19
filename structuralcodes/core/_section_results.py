@@ -14,7 +14,7 @@ from ..geometry import CompoundGeometry
 from .base import Geometry, Section
 
 
-@dataclass(slots=True)
+@dataclass
 class SectionProperties:
     """Simple dataclass for storing section properties."""
 
@@ -272,7 +272,7 @@ def _get_point_response(
     return None
 
 
-@dataclass(slots=True)
+@dataclass
 class MomentCurvatureResults:
     """Class for storing moment curvature results.
 
@@ -690,7 +690,7 @@ class SectionDetailedResultState:
         return self._point_data
 
 
-@dataclass(slots=True)
+@dataclass
 class UltimateBendingMomentResults:
     """Class for storing the ultimate bending moment computation for a given
     inclination of n.a. and axial load.
@@ -821,7 +821,7 @@ class UltimateBendingMomentResults:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class StrainProfileResult:
     """Class for storing the results from calculate_strain_profile method."""
 
@@ -1010,7 +1010,7 @@ class StrainProfileResult:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class IntegrateStrainStiffnessResult:
     """Class for storing the results from integrating modulus."""
 
@@ -1029,7 +1029,7 @@ class IntegrateStrainStiffnessResult:
         return np.asarray(self.tangent, dtype=dtype)
 
 
-@dataclass(slots=True)
+@dataclass
 class IntegrateStrainForceResult:
     """Class for storing the results from integrating stresses."""
 
@@ -1169,7 +1169,7 @@ class IntegrateStrainForceResult:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class InteractionDomainResult:
     """Class for storing common data on all interaction domain results.
 
@@ -1228,7 +1228,7 @@ class InteractionDomainResult:
         raise ValueError('Strains are not available in this result object.')
 
 
-@dataclass(slots=True)
+@dataclass
 class NMMInteractionDomainResult(InteractionDomainResult):
     """Class for storing the NMM interaction domain results.
 
@@ -1256,7 +1256,7 @@ class NMMInteractionDomainResult(InteractionDomainResult):
     # plots.
 
 
-@dataclass(slots=True)
+@dataclass
 class NMInteractionDomainResult(InteractionDomainResult):
     """Class for storing the NM interaction domain results.
 
@@ -1276,7 +1276,7 @@ class NMInteractionDomainResult(InteractionDomainResult):
     field_num: NDArray[np.float64] = None
 
 
-@dataclass(slots=True)
+@dataclass
 class MMInteractionDomainResult(InteractionDomainResult):
     """Class for storing the MM interaction domain results.
 
