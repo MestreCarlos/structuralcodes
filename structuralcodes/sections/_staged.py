@@ -407,15 +407,13 @@ class StagedSectionCalculator:
             StagedAnalysisResult: The result of the solve.
         """
         section = self._build_active_section()
-        eps_a, chi_y, chi_z = (
-            section.section_calculator.calculate_strain_profile(
-                n, my, mz, **kwargs
-            )
+        strain_result = section.section_calculator.calculate_strain_profile(
+            n, my, mz, **kwargs
         )
         return StagedAnalysisResult(
-            eps_a=eps_a,
-            chi_y=chi_y,
-            chi_z=chi_z,
+            eps_a=strain_result.eps_a,
+            chi_y=strain_result.chi_y,
+            chi_z=strain_result.chi_z,
             n=n,
             my=my,
             mz=mz,

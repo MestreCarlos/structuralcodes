@@ -42,6 +42,7 @@ from structuralcodes.materials.reinforcement import (
 )
 from structuralcodes.sections import (
     BeamSection,
+    GenericSection,
     calculate_elastic_cracked_properties,
 )
 
