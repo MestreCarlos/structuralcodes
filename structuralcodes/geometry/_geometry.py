@@ -1,4 +1,4 @@
-"""Generic class section implemenetation."""
+"""Geometry classes for beam sections."""
 
 from __future__ import annotations  # To have clean hints of ArrayLike in docs
 
@@ -7,6 +7,7 @@ import warnings
 from math import atan2
 
 import numpy as np
+import triangle
 from numpy.typing import ArrayLike
 from shapely import affinity
 from shapely.geometry import (
@@ -19,9 +20,10 @@ from shapely.geometry import (
 )
 from shapely.ops import split
 
-from structuralcodes.core.base import Material
 from structuralcodes.materials.basic import ElasticMaterial
 from structuralcodes.materials.concrete import Concrete
+
+from ..core.base import Geometry, Material, _GroupMixin
 
 
 def _mirror_about_axis_matrix(axis: LineString) -> np.ndarray:
@@ -57,75 +59,7 @@ def _mirror_about_axis_matrix(axis: LineString) -> np.ndarray:
     return T_inv @ R_inv @ M @ R @ T
 
 
-class Geometry:
-    """Base class for a geometry object."""
-
-    section_counter: t.ClassVar[int] = 0
-
-    def __init__(
-        self, name: t.Optional[str] = None, group_label: t.Optional[str] = None
-    ) -> None:
-        """Initializes a geometry object.
-
-        The name and grouplabel serve for filtering in a compound object. By
-        default it creates a new name each time.
-
-        Arguments:
-            name (Optional(str)): The name to be given to the object.
-            group_label (Optional(str)): A label for grouping several objects.
-        """
-        if name is not None:
-            self._name = name
-        else:
-            counter = Geometry.return_global_counter_and_increase()
-            self._name = f'Geometry_{counter}'
-        self._group_label = group_label
-
-    @property
-    def name(self):
-        """Returns the name of the Geometry."""
-        return self._name
-
-    @property
-    def group_label(self):
-        """Returns the group_label fo the Geometry."""
-        return self._group_label
-
-    @classmethod
-    def _increase_global_counter(cls):
-        """Increases the global counter by one."""
-        cls.section_counter += 1
-
-    @classmethod
-    def return_global_counter_and_increase(cls):
-        """Returns the current counter and increases it by one."""
-        counter = cls.section_counter
-        cls._increase_global_counter()
-        return counter
-
-    @staticmethod
-    def from_geometry(
-        geo: Geometry,
-        new_material: t.Optional[Material] = None,
-    ) -> Geometry:
-        """Create a new geometry with a different material."""
-        raise NotImplementedError(
-            'This method should be implemented by subclasses'
-        )
-
-    def __add__(self, other: Geometry) -> CompoundGeometry:
-        """Add operator "+" for geometries.
-
-        Arguments:
-            other (Geometry): The other geometry to add.
-
-        Returns:
-            CompoundGeometry: A new CompoundGeometry.
-        """
-        return CompoundGeometry([self, other])
-
-
-class PointGeometry(Geometry):
+class PointGeometry(_GroupMixin, Geometry):
     """Class for a point geometry with material.
 
     Basically it is a wrapper for shapely Point including the material (and
@@ -154,7 +88,8 @@ class PointGeometry(Geometry):
             group_label (Optional(str)): A label for grouping several objects
                 (default is None).
         """
-        super().__init__(name, group_label)
+        super().__init__(name)
+        self._group_label = group_label
         # I check if point is a shapely Point or an ArrayLike object
         if not isinstance(point, Point):
             # It is an ArrayLike object -> create the Point given the
@@ -331,6 +266,17 @@ class PointGeometry(Geometry):
             group_label=geo._group_label,
         )
 
+    def __add__(self, other: Geometry) -> CompoundGeometry:
+        """Add operator "+" for geometries.
+
+        Arguments:
+            other (Geometry): The other geometry to add.
+
+        Returns:
+            CompoundGeometry: A new CompoundGeometry.
+        """
+        return CompoundGeometry([self, other])
+
 
 def create_line_point_angle(
     point: t.Union[Point, t.Tuple[float, float]],
@@ -371,7 +317,7 @@ def create_line_point_angle(
     return LineString([(x1, y1), (x2, y2)])
 
 
-class SurfaceGeometry(Geometry):
+class SurfaceGeometry(_GroupMixin, Geometry):
     """Class for a surface geometry with material.
 
     Basically it is a wrapper for shapely polygon including the material (and
@@ -398,7 +344,8 @@ class SurfaceGeometry(Geometry):
             name (Optional(str)): The name to be given to the object.
             group_label (Optional(str)): A label for grouping several objects.
         """
-        super().__init__(name=name, group_label=group_label)
+        super().__init__(name=name)
+        self._group_label = group_label
         # Check if inputs are of the correct type, otherwise return error
         if not isinstance(poly, Polygon):
             raise TypeError(
@@ -453,6 +400,101 @@ class SurfaceGeometry(Geometry):
     def polygon(self) -> Polygon:
         """Returns the Shapely Polygon."""
         return self._polygon
+
+    def random_points_within(
+        self, num_points: int = 100, seed: int = None
+    ) -> np.ndarray:
+        """Returns coordinates of random points within the polygon.
+
+        Arguments:
+            num_points (int): Number of random points to generate.
+            seed (int): Seed for the random number generator.
+
+        Returns:
+            x, y (ndarray, ndarray): Arrays with the x and y coordinates of the
+            random points within the polygon.
+        """
+
+        def _prepare_triangulation_data(poly: Polygon) -> dict[str:ArrayLike]:
+            # Create the tri dictionary
+            tri: dict[str:ArrayLike] = {}
+            # 1. External boundary process
+            # 1a. Get vertices, skipping the last one
+            vertices = np.column_stack(poly.exterior.xy)[:-1, :]
+            n_vertices = vertices.shape[0]
+            # 1b. Create segments
+            node_i = np.arange(n_vertices)
+            node_j = np.roll(node_i, -1)
+            segments = np.column_stack((node_i, node_j))
+
+            # 2. Process holes
+            holes = []
+            for interior in poly.interiors:
+                # 2a. Get vertices, skipping the last one
+                vertices_int = np.column_stack(interior.xy)[:-1, :]
+                n_vertices_int = vertices_int.shape[0]
+                # 2b. Create segments
+                node_i = np.arange(n_vertices_int) + n_vertices
+                node_j = np.roll(node_i, -1)
+                segments_int = np.column_stack((node_i, node_j))
+                c = Polygon(interior)
+                holes.append([c.centroid.x, c.centroid.y])
+                # Append to the global arrays
+                vertices = np.vstack((vertices, vertices_int))
+                segments = np.vstack((segments, segments_int))
+                n_vertices += n_vertices_int
+            # Return the dictionary with data for triangulate
+            tri['vertices'] = vertices
+            tri['segments'] = segments
+            if len(holes) > 0:
+                tri['holes'] = holes
+            return tri
+
+        tri = _prepare_triangulation_data(self.polygon)
+        triangles = triangle.triangulate(tri, 'p')
+
+        xs = np.array([])
+        ys = np.array([])
+        # Manage reproducibility of random points:
+        # seeds must be random in the triangles loop
+        n_tr = len(triangles['triangles'])
+        rng = np.random.default_rng(seed)
+        seeds = rng.integers(1, 300, n_tr)
+        for tr, s in zip(triangles['triangles'], seeds):
+            # Get vertices for the triangle
+            Ax = triangles['vertices'][tr[0]][0]
+            Ay = triangles['vertices'][tr[0]][1]
+            Bx = triangles['vertices'][tr[1]][0]
+            By = triangles['vertices'][tr[1]][1]
+            Cx = triangles['vertices'][tr[2]][0]
+            Cy = triangles['vertices'][tr[2]][1]
+            # area of the triangle
+            a = Ax * By - Ay * Bx
+            a += Bx * Cy - By * Cx
+            a += Cx * Ay - Cy * Ax
+            a = abs(a) * 0.5
+            # number of points in this triangle (at least 1)
+            n = max(1, int(num_points * a / self.area))
+            # generate random points in the triangle
+            rng = np.random.default_rng(s)
+            r1 = rng.uniform(0, 1, n)
+            r2 = rng.uniform(0, 1, n)
+            x = (
+                (1 - np.sqrt(r1)) * Ax
+                + (np.sqrt(r1) * (1 - r2)) * Bx
+                + (r2 * np.sqrt(r1)) * Cx
+            )
+            y = (
+                (1 - np.sqrt(r1)) * Ay
+                + (np.sqrt(r1) * (1 - r2)) * By
+                + (r2 * np.sqrt(r1)) * Cy
+            )
+
+            # Concatenate the new points
+            xs = np.concatenate((xs, x))
+            ys = np.concatenate((ys, y))
+
+        return xs, ys
 
     def calculate_extents(self) -> t.Tuple[float, float, float, float]:
         """Calculate extents of SurfaceGeometry.
@@ -540,6 +582,17 @@ class SurfaceGeometry(Geometry):
         # get the intersection
         return self.polygon.intersection(lines_polygon)
 
+    def __add__(self, other: Geometry) -> CompoundGeometry:
+        """Add operator "+" for geometries.
+
+        Arguments:
+            other (Geometry): The other geometry to add.
+
+        Returns:
+            CompoundGeometry: A new CompoundGeometry.
+        """
+        return CompoundGeometry([self, other])
+
     def __sub__(self, other: Geometry) -> SurfaceGeometry:
         """Add operator "-" for geometries.
 
@@ -582,6 +635,8 @@ class SurfaceGeometry(Geometry):
             poly=affinity.translate(self.polygon, dx, dy),
             material=self.material,
             concrete=self.concrete,
+            name=self.name,
+            group_label=self.group_label,
         )
 
     def rotate(
@@ -609,6 +664,8 @@ class SurfaceGeometry(Geometry):
             ),
             material=self.material,
             concrete=self.concrete,
+            name=self.name,
+            group_label=self.group_label,
         )
 
     def mirror(self, axis: LineString) -> SurfaceGeometry:
@@ -631,6 +688,8 @@ class SurfaceGeometry(Geometry):
             poly=affinity.affine_transform(self.polygon, params),
             material=self.material,
             concrete=self.concrete,
+            name=self.name,
+            group_label=self.group_label,
         )
 
     @staticmethod
@@ -668,7 +727,11 @@ class SurfaceGeometry(Geometry):
             # elastic modulus
             new_material = ElasticMaterial.from_material(geo.material)
 
-        return SurfaceGeometry(poly=geo.polygon, material=new_material)
+        return SurfaceGeometry(
+            poly=geo.polygon,
+            material=new_material,
+            group_label=geo.group_label,
+        )
 
     # here we can also add static methods like:
     # from_points
@@ -688,7 +751,10 @@ def _process_geometries_multipolygon(
     if isinstance(materials, Material):
         for g in geometries.geoms:
             checked_geometries.append(
-                SurfaceGeometry(poly=g, material=materials)
+                SurfaceGeometry(
+                    poly=g,
+                    material=materials,
+                )
             )
     elif isinstance(materials, list):
         # the list of materials is provided, one for each polygon
@@ -697,7 +763,12 @@ def _process_geometries_multipolygon(
                 'geometries and materials should have the same length'
             )
         for g, m in zip(geometries.geoms, materials):
-            checked_geometries.append(SurfaceGeometry(poly=g, material=m))
+            checked_geometries.append(
+                SurfaceGeometry(
+                    poly=g,
+                    material=m,
+                )
+            )
     return checked_geometries
 
 
@@ -755,27 +826,42 @@ class CompoundGeometry(Geometry):
                 geometries, materials
             )
             self.point_geometries = []
-            # useful for representation in svg
-            geoms_representation = [g.polygon for g in self.geometries]
-            self.geom = MultiPolygon(geoms_representation)
+            # self.geom (svg representation) is built lazily, see the geom
+            # property.
+            self._geom = None
             return
         if isinstance(geometries, list):
             self.geometries, self.point_geometries = _process_geometries_list(
                 geometries
             )
-            # useful for representation in svg
-            geoms_representation = [g.polygon for g in self.geometries]
-            geoms_representation += [
-                pg.point.buffer(pg.diameter / 2)
-                for pg in self.point_geometries
-            ]
-            self.geom = MultiPolygon(geoms_representation)
+            # self.geom (svg representation) is built lazily, see the geom
+            # property.
+            self._geom = None
         self._reinforced_concrete = None
 
     # we can add here static methods like
     # from_dxf
     # from_ascii
     # ...
+
+    @property
+    def geom(self) -> MultiPolygon:
+        """MultiPolygon used for the SVG representation, built lazily.
+
+        Point geometries are represented as buffered circles. This is only
+        needed for display, so it is computed on first access rather than in
+        __init__ -- building it eagerly buffers every point geometry on every
+        construction (including every rotate()), which dominated the section
+        calculations.
+        """
+        if self._geom is None:
+            geoms_representation = [g.polygon for g in self.geometries]
+            geoms_representation += [
+                pg.point.buffer(pg.diameter / 2)
+                for pg in self.point_geometries
+            ]
+            self._geom = MultiPolygon(geoms_representation)
+        return self._geom
 
     def _repr_svg_(self) -> str:
         """Returns the svg representation."""
@@ -799,6 +885,33 @@ class CompoundGeometry(Geometry):
         for geo in self.geometries:
             area += geo.area
         return area
+
+    def get_point_geometries(
+        self, group_label: t.Optional[str] = None
+    ) -> t.Tuple[np.ndarray, t.List[Material]]:
+        """Returns the coordinates and the material of the point geometries.
+         The coordinates are returned as a numpy array.
+
+        Arguments:
+            group_label (Optional(str)): If provided, only point geometries
+                with the given group_label are returned.
+
+        Returns:
+            Tuple[ndarray, List[Material]]: Coordinates array of shape (n, 2)
+            and list of materials.
+
+        """
+        coords = []
+        materials = []
+
+        for pg in self.point_geometries:
+            if group_label is None or pg.group_label == group_label:
+                coords.append([pg.x, pg.y])
+                materials.append(pg.material)
+
+        if len(coords) == 0:
+            return None, None
+        return np.array(coords), materials
 
     def calculate_extents(self) -> t.Tuple[float, float, float, float]:
         """Calculate extents of CompundGeometry.
@@ -884,6 +997,17 @@ class CompoundGeometry(Geometry):
             processed_geoms.append(pg.mirror(axis))
         return CompoundGeometry(geometries=processed_geoms)
 
+    def __add__(self, other: Geometry) -> CompoundGeometry:
+        """Add operator "+" for geometries.
+
+        Arguments:
+            other (Geometry): The other geometry to add.
+
+        Returns:
+            CompoundGeometry: A new CompoundGeometry.
+        """
+        return CompoundGeometry([self, other])
+
     def __sub__(self, other: Geometry) -> CompoundGeometry:
         """Add operator "-" for geometries.
 
@@ -933,3 +1057,140 @@ class CompoundGeometry(Geometry):
                 PointGeometry.from_geometry(geo=pg, new_material=new_material)
             )
         return CompoundGeometry(geometries=processed_geoms)
+
+    def name_filter(
+        self,
+        pattern: t.Optional[str],
+        *,
+        case_sensitive: bool = True,
+        return_mode: t.Literal['flat', 'split'] = 'flat',
+    ) -> t.Union[t.List[Geometry], t.Dict[str, t.List[Geometry]]]:
+        """Filter geometries by name using a pattern.
+
+        This method returns the geometries whose name matches a given pattern.
+
+        Arguments:
+            pattern (str | None, optional): Pattern used to match geometry
+                names. If ``None``, all geometries are returned.
+
+        Keyword Arguments:
+            case_sensitive (bool, optional): If ``True`` (default), the match
+                is case-sensitive.
+            return_mode (str, optional): Controls the return format. ``"flat"``
+                (default): return a single list containing both
+                ``SurfaceGeometry`` and ``PointGeometry`` objects. ``"split"``:
+                return a dictionary separating the two types.
+
+        Returns:
+            list[Geometry] | dict[str, list[Geometry]]: The filtered
+            geometries. If ``return_mode="flat"``, a single list containing
+            both ``SurfaceGeometry`` and ``PointGeometry`` objects is returned.
+            If ``return_mode="split"``, a dictionary with keys ``"surfaces"``
+            and ``"points"`` is returned.
+
+        Note:
+            The pattern supports simple wildcard matching:
+
+            * ``*`` matches any sequence of characters
+            * ``?`` matches a single character
+            * ``[abc]`` matches any character in the set
+
+        Examples:
+            Match geometries whose name starts with ``"nametos"``:
+
+            >>> geo.name_filter("nametos*")
+
+            Match geometries containing ``"pier"``:
+
+            >>> geo.name_filter("*pier*")
+
+            Case-insensitive match:
+
+            >>> geo.name_filter("Abutment??", case_sensitive=False)
+        """
+        surfaces = self.geometries
+        points = self.point_geometries
+
+        if pattern:
+            surfaces = [
+                g
+                for g in surfaces
+                if g._name_matches(pattern, case_sensitive=case_sensitive)
+            ]
+            points = [
+                g
+                for g in points
+                if g._name_matches(pattern, case_sensitive=case_sensitive)
+            ]
+        if return_mode == 'flat':
+            return [*surfaces, *points]
+        return {'surfaces': surfaces, 'points': points}
+
+    def group_filter(
+        self,
+        pattern: t.Optional[str],
+        *,
+        case_sensitive: bool = True,
+        return_mode: t.Literal['flat', 'split'] = 'flat',
+    ) -> t.Union[t.List[Geometry], t.Dict[str, t.List[Geometry]]]:
+        """Filter geometries by group_label using a pattern.
+
+        This method returns the geometries whose group_label matches a given
+        pattern.
+
+        Arguments:
+            pattern (str | None, optional): Pattern used to match geometry
+                group labels. If ``None``, all geometries are returned.
+
+        Keyword Arguments:
+            case_sensitive (bool, optional): If ``True`` (default), the match
+                is case-sensitive.
+            return_mode (str, optional): Controls the return format. ``"flat"``
+                (default): return a single list containing both
+                `SurfaceGeometry`` and ``PointGeometry`` objects. ``"split"``:
+                return a dictionary separating the two types.
+
+        Returns:
+            list[Geometry] | dict[str, list[Geometry]]: The filtered
+            geometries. If ``return_mode="flat"``, a single list containing
+            both ``SurfaceGeometry`` and ``PointGeometry`` objects is returned.
+            If ``return_mode="split"``, a dictionary with keys ``"surfaces"``
+            and ``"points"`` is returned.
+
+        Note:
+            The pattern supports simple wildcard matching:
+
+            * ``*`` matches any sequence of characters
+            * ``?`` matches a single character
+            * ``[abc]`` matches any character in the set
+
+        Examples:
+            Match geometries whose group_label starts with ``"grouptos"``:
+
+            >>> geo.group_filter("grouptos*")
+
+            Match geometries containing ``"pier"``:
+
+            >>> geo.group_filter("*pier*")
+
+            Case-insensitive match:
+
+            >>> geo.group_filter("Abutment??", case_sensitive=False)
+        """
+        surfaces = self.geometries
+        points = self.point_geometries
+
+        if pattern:
+            surfaces = [
+                g
+                for g in surfaces
+                if g._group_matches(pattern, case_sensitive=case_sensitive)
+            ]
+            points = [
+                g
+                for g in points
+                if g._group_matches(pattern, case_sensitive=case_sensitive)
+            ]
+        if return_mode == 'flat':
+            return [*surfaces, *points]
+        return {'surfaces': surfaces, 'points': points}
