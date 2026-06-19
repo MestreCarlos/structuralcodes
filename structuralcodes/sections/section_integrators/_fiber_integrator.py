@@ -62,6 +62,24 @@ class FiberIntegrator(SectionIntegrator):
         eps_a, chi_y, chi_z = reference_plane
         return eps_a - chi_z * y + chi_y * z
 
+    def _reference_plane_for_geometry(self, geometry) -> t.Optional[t.Sequence[float]]:
+        """Return the reference strain plane for a geometry instance.
+
+        Lookup is by object identity first, then by ``group_label`` so staged
+        analyses still work when the section geometry is rotated and fibers are
+        triangulated on new geometry instances (e.g. ULS bending strength).
+        """
+        reference_plane = self.reference_planes.get(geometry)
+        if reference_plane is not None:
+            return reference_plane
+        label = getattr(geometry, 'group_label', None)
+        if not label:
+            return None
+        for geo, plane in self.reference_planes.items():
+            if getattr(geo, 'group_label', None) == label:
+                return plane
+        return None
+
     def prepare_triangulation(self, geo: SurfaceGeometry) -> t.Dict:
         """Prepare data for triangulating it with triangle.
 
@@ -138,7 +156,7 @@ class FiberIntegrator(SectionIntegrator):
             mesh = triangle.triangulate(tri, f'pq{30:.1f}Aa{max_area}o1')
             constitutive_law = g.material.constitutive_law
             # Optional stress-free reference strain plane for this geometry
-            reference_plane = self.reference_planes.get(g)
+            reference_plane = self._reference_plane_for_geometry(g)
             # Get x and y coordinates (centroid) and area for each fiber
             x = []
             y = []
@@ -197,7 +215,7 @@ class FiberIntegrator(SectionIntegrator):
             # Reference strain of this point (scalar, zero if no plane)
             eps_ref = float(
                 self._reference_strain(
-                    self.reference_planes.get(pg),
+                    self._reference_plane_for_geometry(pg),
                     np.array(x),
                     np.array(y),
                 )
