@@ -232,11 +232,10 @@ class StagedAnalysisResult:
 
         Useful to verify equilibrium with the applied loads.
         """
-        return tuple(
-            self.section.section_calculator.integrate_strain_profile(
-                strain=list(self.strain_plane)
-            )
+        result = self.section.section_calculator.integrate_strain_profile(
+            strain=list(self.strain_plane)
         )
+        return result.astuple()
 
 
 class StagedSectionCalculator:

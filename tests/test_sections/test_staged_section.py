@@ -88,7 +88,9 @@ def test_solve_without_state_matches_generic_section():
         0.0, 5e6, 0.0
     )
 
-    assert np.allclose(result.strain_plane, expected, rtol=1e-9, atol=1e-12)
+    assert np.allclose(
+        result.strain_plane, expected.strain_plane, rtol=1e-9, atol=1e-12
+    )
 
 
 # -- Envelopes do not accumulate state -----------------------------------

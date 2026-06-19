@@ -213,7 +213,7 @@ def test_line_geometry_tangent_stiffness(integrator):
     sec_line = GenericSection(line_geo, integrator=integrator, mesh_size=0.01)
     k_line = sec_line.section_calculator.integrate_strain_profile(
         [0, 0, 0], 'modulus'
-    )
+    ).tangent
 
     L = 600.0
     A = L * t
