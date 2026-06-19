@@ -859,9 +859,10 @@ class BeamSectionCalculator(SectionCalculator):
             )
             coords = np.vstack((tr[0], tr[1]))
             coords_r = T @ coords
-            rotated_integration_data.append(
-                (coords_r[0, :], coords_r[1, :], tr[2], tr[3])
-            )
+            rotated = (coords_r[0, :], coords_r[1, :], tr[2], tr[3])
+            if len(tr) > 4:
+                rotated = (*rotated, tr[4])
+            rotated_integration_data.append(rotated)
         self.integration_data = rotated_integration_data
 
     @t.overload
